@@ -43,6 +43,7 @@ export default function JEEChallengerUltimate() {
   const [chat, setChat] = useState([{ role: 'ai', text: 'Namaste! Taiyar ho rank phodne ke liye?' }]);
   const [chatInput, setChatInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [submittingQuiz, setSubmittingQuiz] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
 
   // --- 1. AUTH & PROFILE SYNC ---
@@ -93,45 +94,69 @@ export default function JEEChallengerUltimate() {
 
   const fetchTests = async () => {
     setLoading(true);
-    const snap = await getDocs(collection(db, "questions"));
-    setTests([...new Set(snap.docs.map(d => d.data().exam))]);
-    setLoading(false);
+    try {
+      const snap = await getDocs(collection(db, "questions"));
+      setTests([...new Set(snap.docs.map(d => d.data().exam))]);
+    } catch (error: any) {
+      alert(error.message || 'Tests load nahi ho paaye.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startQuiz = async (name: string) => {
     setLoading(true);
-    const q = query(collection(db, "questions"), where("exam", "==", name));
-    const snap = await getDocs(q);
-    const qs = snap.docs.map(d => ({ id: d.id, ...d.data(), userAns: '' }));
-    setActiveQuiz(qs);
-    setCurrIdx(0); setTimeLeft(1800); setScreen('quiz');
-    setLoading(false);
+    try {
+      const q = query(collection(db, "questions"), where("exam", "==", name));
+      const snap = await getDocs(q);
+      const qs = snap.docs.map(d => ({ id: d.id, ...d.data(), userAns: '' }));
+      setActiveQuiz(qs);
+      setCurrIdx(0);
+      setScore(0);
+      setTimeLeft(1800);
+      setScreen('quiz');
+    } catch (error: any) {
+      alert(error.message || 'Quiz start nahi ho paaya.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const finishQuiz = async () => {
+    if (submittingQuiz || !user) return;
+    setSubmittingQuiz(true);
     setLoading(true);
-    let s = 0;
-    const batch = writeBatch(db);
-    activeQuiz.forEach(q => {
-      const correct = q.userAns?.toString().trim().toLowerCase() === q.answer?.toString().trim().toLowerCase();
-      if (correct) s += 4;
-      else if (q.userAns) {
-        const mRef = doc(collection(db, "mistakes"));
-        batch.set(mRef, { userId: user.uid, question: q.text, correct: q.answer, userAns: q.userAns, exam: q.exam });
-      }
-    });
-    await batch.commit();
-    setScore(s);
-    await updateDoc(doc(db, "users", user.uid), { totalScore: increment(s) });
-    setScreen('result');
-    
-    // AI Review
-    const wrong = activeQuiz.filter(q => q.userAns?.toString().trim().toLowerCase() !== q.answer?.toString().trim().toLowerCase());
-    const prompt = `Student scored ${s}. Mistakes: ${JSON.stringify(wrong)}. Explain in Hinglish with LaTeX.`;
-    const res = await fetch('/api/chat', { method: 'POST', body: JSON.stringify({ prompt }) });
-    const data = await res.json();
-    setAiReview(data.text);
-    setLoading(false);
+    try {
+      let s = 0;
+      const batch = writeBatch(db);
+      activeQuiz.forEach(q => {
+        const correct = q.userAns?.toString().trim().toLowerCase() === q.answer?.toString().trim().toLowerCase();
+        if (correct) s += 4;
+        else if (q.userAns) {
+          const mRef = doc(collection(db, "mistakes"));
+          batch.set(mRef, { userId: user.uid, question: q.text, correct: q.answer, userAns: q.userAns, exam: q.exam });
+        }
+      });
+      await batch.commit();
+      setScore(s);
+      await updateDoc(doc(db, "users", user.uid), { totalScore: increment(s) });
+      setScreen('result');
+      
+      const wrong = activeQuiz.filter(q => q.userAns?.toString().trim().toLowerCase() !== q.answer?.toString().trim().toLowerCase());
+      const prompt = `Student scored ${s}. Mistakes: ${JSON.stringify(wrong)}. Explain in Hinglish with LaTeX.`;
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      });
+      const data = await res.json();
+      setAiReview(data.text || 'AI review abhi generate nahi ho paaya.');
+    } catch (error: any) {
+      alert(error.message || 'Quiz submit karte waqt error aa gaya.');
+    } finally {
+      setLoading(false);
+      setSubmittingQuiz(false);
+    }
   };
 
   const deleteTest = async (name: string) => {
@@ -158,12 +183,24 @@ export default function JEEChallengerUltimate() {
   };
 
   const askAI = async () => {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || loading) return;
     const newChat = [...chat, { role: 'user', text: chatInput }];
-    setChat(newChat); setChatInput('');
-    const res = await fetch('/api/chat', { method: 'POST', body: JSON.stringify({ prompt: chatInput }) });
-    const data = await res.json();
-    setChat([...newChat, { role: 'ai', text: data.text }]);
+    setChat(newChat);
+    setChatInput('');
+    setLoading(true);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: chatInput })
+      });
+      const data = await res.json();
+      setChat([...newChat, { role: 'ai', text: data.text || 'AI se response nahi aaya. Try again.' }]);
+    } catch {
+      setChat([...newChat, { role: 'ai', text: 'Bhai network issue lag raha hai, thodi der baad try kar.' }]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Sidebar Loaders
@@ -247,6 +284,7 @@ export default function JEEChallengerUltimate() {
 
             {tab !== 'ai' ? (
               <div className="space-y-4">
+                {loading && <p className="text-center text-xs text-gray-500 uppercase tracking-wider">Loading tests...</p>}
                 {tests.filter(ex => {
                   const isPYQ = ex.includes('20') || ex.toLowerCase().includes('jee');
                   return tab === 'pyq' ? isPYQ : !isPYQ;
@@ -265,6 +303,7 @@ export default function JEEChallengerUltimate() {
                     
                     <button 
                       onClick={(e) => { e.stopPropagation(); setOpenKebab(openKebab === ex ? null : ex); }} 
+                      disabled={loading}
                       className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#222] transition text-gray-600"
                     >
                       <i className="fas fa-ellipsis-v"></i>
@@ -278,6 +317,12 @@ export default function JEEChallengerUltimate() {
                     )}
                   </div>
                 ))}
+
+                {!loading && tests.length === 0 && (
+                  <div className="text-center text-gray-500 text-sm py-10 bg-[#111] border border-[#222] rounded-3xl">
+                    Abhi koi test available nahi hai.
+                  </div>
+                )}
                 
                 {user?.email === ADMIN_EMAIL && (
                   <div className="mt-12 p-5 bg-black border-2 border-dashed border-yellow-600/30 rounded-3xl">
@@ -298,7 +343,7 @@ export default function JEEChallengerUltimate() {
                  </div>
                  <div className="flex gap-2 bg-[#111] p-1 rounded-2xl border border-[#333]">
                    <input className="flex-1 bg-transparent p-4 rounded-xl outline-none text-sm" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key==='Enter' && askAI()} placeholder="Ask anything about JEE..." />
-                   <button onClick={askAI} className="bg-[#00e676] text-black px-6 rounded-xl font-black text-xs">ASK</button>
+                   <button onClick={askAI} disabled={loading} className="bg-[#00e676] text-black px-6 rounded-xl font-black text-xs disabled:opacity-60">{loading ? '...' : 'ASK'}</button>
                  </div>
               </div>
             )}
@@ -314,7 +359,7 @@ export default function JEEChallengerUltimate() {
                   <button onClick={async () => {
                     await addDoc(collection(db, "bookmarks"), { userId: user.uid, ...activeQuiz[currIdx] }); 
                     alert("Bookmarked! 🔖 Check Sidebar.");
-                  }} className="w-10 h-10 bg-[#1a1a1a] rounded-full text-blue-500 hover:bg-blue-500 hover:text-white transition"><i className="fas fa-bookmark"></i></button>
+                  }} disabled={submittingQuiz} className="w-10 h-10 bg-[#1a1a1a] rounded-full text-blue-500 hover:bg-blue-500 hover:text-white transition disabled:opacity-50"><i className="fas fa-bookmark"></i></button>
                   <span className="px-4 py-2 bg-[#1a1a1a] rounded-full font-mono text-[#00e676] border border-[#333] text-sm">{Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2,'0')}</span>
                 </div>
              </div>
@@ -351,12 +396,13 @@ export default function JEEChallengerUltimate() {
              </div>
 
              <div className="mt-12 flex gap-4">
-                {currIdx > 0 && <button onClick={() => setCurrIdx(currIdx-1)} className="flex-1 py-5 rounded-3xl bg-[#1a1a1a] font-bold text-gray-400">PREV</button>}
+                {currIdx > 0 && <button onClick={() => setCurrIdx(currIdx-1)} disabled={submittingQuiz} className="flex-1 py-5 rounded-3xl bg-[#1a1a1a] font-bold text-gray-400 disabled:opacity-50">PREV</button>}
                 <button 
+                  disabled={submittingQuiz}
                   onClick={() => currIdx === activeQuiz.length-1 ? finishQuiz() : setCurrIdx(currIdx+1)} 
-                  className="flex-[2] py-5 rounded-3xl bg-[#00e676] text-black font-black shadow-lg shadow-[#00e67622] hover:scale-[1.02] active:scale-95 transition-all"
+                  className="flex-[2] py-5 rounded-3xl bg-[#00e676] text-black font-black shadow-lg shadow-[#00e67622] hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-60"
                 >
-                  {currIdx === activeQuiz.length-1 ? 'FINISH & SUBMIT' : 'NEXT QUESTION'}
+                  {submittingQuiz ? 'SUBMITTING...' : currIdx === activeQuiz.length-1 ? 'FINISH & SUBMIT' : 'NEXT QUESTION'}
                 </button>
              </div>
           </div>
