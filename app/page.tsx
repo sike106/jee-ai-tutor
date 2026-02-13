@@ -1,4 +1,4 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+ 
 diff --git a/app/page.tsx b/app/page.tsx
 index 2f5bfa52d13a01a82c4a133bbdba104301e47fa9..28d1865ecbcd679e7efdae87fd1eb959cac6a131 100644
 --- a/app/page.tsx
