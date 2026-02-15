@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Website Builder + Publisher (Next.js)
 
-## Getting Started
+A simple web app where users can:
 
-First, run the development server:
+- create a website with editable content,
+- ask built-in AI to generate different webpage types from a prompt,
+- preview it live,
+- publish it with a shareable link (`?site=<slug>`).
+
+Published sites are stored in browser `localStorage`, so this is a lightweight demo without a database.
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How publishing works
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. (Optional) Use **Generate with AI** and describe your desired webpage type.
+2. Edit fields in the builder if needed.
+3. Click **Publish website**.
+4. App saves the site in localStorage and returns a URL like:
+   - `http://localhost:3000?site=my-awesome-site`
 
-## Learn More
+## Notes
 
-To learn more about Next.js, take a look at the following resources:
+- This is local/browser-based publishing for MVP demos.
+- To make it production-ready, connect publishing to a backend/database and host generated sites on a real domain.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## AI generation
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The app calls `/api/chat` with `mode: "website-builder"` and asks Gemini to return structured JSON for site content, theme, CTA, and sections.

@@ -1,312 +1,452 @@
 "use client";
-import React, { useState, useEffect } from 'react';
-// Dhyan rakhein: Ye imports aapke firebase.js ki location ke hisaab se hone chahiye
-import { auth, db, googleProvider } from '../lib/firebase'; 
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword 
-} from 'firebase/auth';
-import { 
-  collection, getDocs, getDoc, doc, setDoc, updateDoc, 
-  query, where, writeBatch, increment, orderBy, limit, addDoc 
-} from 'firebase/firestore';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import 'katex/dist/katex.min.css';
 
-const ADMIN_EMAIL = "aapka-email@gmail.com"; // Yahan apna email dalein
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
-export default function JEEChallengerUltimate() {
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState({ name: '', target: 'JEE 2026', photo: '' });
-  const [screen, setScreen] = useState('auth'); 
-  const [tab, setTab] = useState('pyq');
-  const [menuOpen, setMenuOpen] = useState(false); 
-  const [openKebab, setOpenKebab] = useState<string | null>(null);
+type Theme = "light" | "dark" | "sunset";
 
-  const [tests, setTests] = useState<any[]>([]);
-  const [activeQuiz, setActiveQuiz] = useState<any[]>([]);
-  const [currIdx, setCurrIdx] = useState(0);
-  const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [leaderboard, setLeaderboard] = useState<any[]>([]);
-  const [mistakes, setMistakes] = useState<any[]>([]);
-  const [bookmarks, setBookmarks] = useState<any[]>([]);
-  
-  const [email, setEmail] = useState('');
-  const [pass, setPass] = useState('');
-  const [isLoginMode, setIsLoginMode] = useState(true);
-  const [aiReview, setAiReview] = useState('');
-  const [chat, setChat] = useState([{ role: 'ai', text: 'Namaste! Taiyar ho rank phodne ke liye?' }]);
-  const [chatInput, setChatInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [submittingQuiz, setSubmittingQuiz] = useState(false);
-  const [jsonInput, setJsonInput] = useState('');
+type SiteData = {
+  slug: string;
+  siteName: string;
+  tagline: string;
+  description: string;
+  ctaText: string;
+  ctaLink: string;
+  primaryColor: string;
+  theme: Theme;
+  sections: string[];
+  updatedAt: string;
+};
 
-  // 1. AUTH & PROFILE SYNC
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        setUser(u);
-        const uRef = doc(db, "users", u.uid);
-        const uDoc = await getDoc(uRef);
-        let gPhoto = u.photoURL || 'https://cdn-icons-png.flaticon.com/512/149/149071.png';
-        
-        if (uDoc.exists()) {
-          const d = uDoc.data();
-          if (!d.photo && u.photoURL) await updateDoc(uRef, { photo: u.photoURL });
-          setProfile({ ...d, photo: d.photo || gPhoto } as any);
-        } else {
-          const newP = { name: u.displayName || 'Student', target: 'JEE 2026', photo: gPhoto };
-          await setDoc(uRef, { ...newP, totalScore: 0 });
-          setProfile(newP as any);
-        }
-        setScreen('app');
-        fetchTests();
-      } else { setScreen('auth'); }
-    });
-    return unsub;
-  }, []);
+const STORAGE_KEY = "site-builder-published-sites";
 
-  // Timer Logic
-  useEffect(() => {
-    let t: any;
-    if (screen === 'quiz' && timeLeft > 0) t = setInterval(() => setTimeLeft(p => p - 1), 1000);
-    else if (timeLeft === 0 && screen === 'quiz') finishQuiz();
-    return () => clearInterval(t);
-  }, [timeLeft, screen]);
+const themeStyles: Record<Theme, string> = {
+  light: "bg-white text-slate-900",
+  dark: "bg-slate-950 text-white",
+  sunset: "bg-gradient-to-b from-orange-100 via-rose-100 to-purple-100 text-slate-900",
+};
 
-  // 2. CORE ACTIONS
-  const handleGoogleLogin = async () => {
-    try { await signInWithPopup(auth, googleProvider); } 
-    catch (e: any) { alert(e.message); }
-  };
+const defaultSections = [
+  "About",
+  "Services",
+  "Testimonials",
+  "Contact",
+];
 
-  const handleEmailAuth = async () => {
-    try {
-      if (isLoginMode) await signInWithEmailAndPassword(auth, email, pass);
-      else await createUserWithEmailAndPassword(auth, email, pass);
-    } catch (e: any) { alert(e.message); }
-  };
+const initialData: SiteData = {
+  slug: "my-awesome-site",
+  siteName: "My Awesome Site",
+  tagline: "Build once. Publish instantly.",
+  description:
+    "This is a beginner-friendly website builder demo built with Next.js. Customize content, preview your page, and publish it with one click.",
+  ctaText: "Book a Call",
+  ctaLink: "https://example.com",
+  primaryColor: "#4f46e5",
+  theme: "light",
+  sections: defaultSections,
+  updatedAt: new Date().toISOString(),
+};
 
-  const fetchTests = async () => {
-    setLoading(true);
-    try {
-      const snap = await getDocs(collection(db, "questions"));
-      setTests([...new Set(snap.docs.map(d => d.data().exam))]);
-    } catch (error: any) {
-      alert(error.message || 'Tests load nahi ho paaye.');
-    } finally {
-      setLoading(false);
+function toSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 50);
+}
+
+function readSites(): Record<string, SiteData> {
+  if (typeof window === "undefined") return {};
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw) as Record<string, SiteData>;
+  } catch {
+    return {};
+  }
+}
+
+function saveSite(site: SiteData) {
+  const sites = readSites();
+  sites[site.slug] = site;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(sites));
+}
+
+function PublishedSiteView({ site }: { site: SiteData }) {
+  return (
+    <main className={`min-h-screen ${themeStyles[site.theme]}`}>
+      <div className="mx-auto max-w-4xl px-6 py-16">
+        <p className="text-sm font-medium uppercase tracking-[0.2em] opacity-60">
+          Published Site
+        </p>
+        <h1 className="mt-3 text-4xl font-bold sm:text-5xl">{site.siteName}</h1>
+        <p className="mt-3 text-lg opacity-85">{site.tagline}</p>
+
+        <a
+          href={site.ctaLink}
+          className="mt-8 inline-block rounded-xl px-6 py-3 font-semibold text-white"
+          style={{ backgroundColor: site.primaryColor }}
+        >
+          {site.ctaText}
+        </a>
+
+        <p className="mt-10 leading-7 opacity-90">{site.description}</p>
+
+        <div className="mt-12 grid gap-4 sm:grid-cols-2">
+          {site.sections.map((section) => (
+            <section key={section} className="rounded-xl border border-black/10 bg-white/50 p-4 backdrop-blur-sm dark:bg-slate-900/40">
+              <h2 className="text-xl font-semibold">{section}</h2>
+              <p className="mt-2 text-sm opacity-75">
+                Add your custom content for the {section.toLowerCase()} section.
+              </p>
+            </section>
+          ))}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+
+function getInitialBuilderState() {
+  if (typeof window === "undefined") {
+    return { siteData: initialData, publishedSite: null as SiteData | null };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const slug = params.get("site");
+
+  if (slug) {
+    const site = readSites()[slug];
+    if (site) {
+      return { siteData: site, publishedSite: site };
     }
-  };
+  }
 
-  const startQuiz = async (name: string) => {
-    setLoading(true);
+  const draft = localStorage.getItem("site-builder-draft");
+  if (draft) {
     try {
-      const q = query(collection(db, "questions"), where("exam", "==", name));
-      const snap = await getDocs(q);
-      const qs = snap.docs.map(d => ({ id: d.id, ...d.data(), userAns: '' }));
-      setActiveQuiz(qs);
-      setCurrIdx(0);
-      setScore(0);
-      setTimeLeft(1800);
-      setScreen('quiz');
-    } catch (error: any) {
-      alert(error.message || 'Quiz start nahi ho paaya.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const finishQuiz = async () => {
-    if (submittingQuiz || !user) return;
-    setSubmittingQuiz(true);
-    setLoading(true);
-    try {
-      let s = 0;
-      const batch = writeBatch(db);
-      activeQuiz.forEach(q => {
-        const correct = q.userAns?.toString().trim().toLowerCase() === q.answer?.toString().trim().toLowerCase();
-        if (correct) s += 4;
-        else if (q.userAns) {
-          const mRef = doc(collection(db, "mistakes"));
-          batch.set(mRef, { userId: user.uid, question: q.text, correct: q.answer, userAns: q.userAns, exam: q.exam });
-        }
-      });
-      await batch.commit();
-      setScore(s);
-      await updateDoc(doc(db, "users", user.uid), { totalScore: increment(s) });
-      setScreen('result');
-      
-      const wrong = activeQuiz.filter(q => q.userAns?.toString().trim().toLowerCase() !== q.answer?.toString().trim().toLowerCase());
-      const prompt = `Student scored ${s}. Mistakes: ${JSON.stringify(wrong)}. Explain in Hinglish with LaTeX.`;
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt })
-      });
-      const data = await res.json();
-      setAiReview(data.text || 'AI review abhi generate nahi ho paaya.');
-    } catch (error: any) {
-      alert(error.message || 'Quiz submit karte waqt error aa gaya.');
-    } finally {
-      setLoading(false);
-      setSubmittingQuiz(false);
-    }
-  };
-
-  const askAI = async () => {
-    if (!chatInput.trim() || loading) return;
-    const newChat = [...chat, { role: 'user', text: chatInput }];
-    setChat(newChat);
-    setChatInput('');
-    setLoading(true);
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: chatInput })
-      });
-      const data = await res.json();
-      setChat([...newChat, { role: 'ai', text: data.text || 'AI se response nahi aaya. Try again.' }]);
+      return { siteData: JSON.parse(draft) as SiteData, publishedSite: null as SiteData | null };
     } catch {
-      setChat([...newChat, { role: 'ai', text: 'Bhai network issue lag raha hai, thodi der baad try kar.' }]);
-    } finally {
-      setLoading(false);
+      return { siteData: initialData, publishedSite: null as SiteData | null };
     }
+  }
+
+  return { siteData: initialData, publishedSite: null as SiteData | null };
+}
+
+export default function Home() {
+  const initialState = useMemo(() => getInitialBuilderState(), []);
+  const [siteData, setSiteData] = useState<SiteData>(initialState.siteData);
+  const [newSection, setNewSection] = useState("");
+  const [publishMessage, setPublishMessage] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiMessage, setAiMessage] = useState("");
+  const [publishedSite] = useState<SiteData | null>(initialState.publishedSite);
+
+  useEffect(() => {
+    if (!publishedSite) {
+      localStorage.setItem("site-builder-draft", JSON.stringify(siteData));
+    }
+  }, [siteData, publishedSite]);
+
+  const previewStyle = useMemo(
+    () => ({ borderColor: siteData.primaryColor }),
+    [siteData.primaryColor]
+  );
+
+  if (publishedSite) {
+    return <PublishedSiteView site={publishedSite} />;
+  }
+
+  const addSection = (event: FormEvent) => {
+    event.preventDefault();
+    const section = newSection.trim();
+    if (!section) return;
+    if (siteData.sections.includes(section)) return;
+
+    setSiteData((prev) => ({ ...prev, sections: [...prev.sections, section] }));
+    setNewSection("");
   };
 
-  // Sidebar Loaders
-  const loadLeaderboard = async () => {
-    setLoading(true);
-    const q = query(collection(db, "users"), orderBy("totalScore", "desc"), limit(10));
-    const s = await getDocs(q);
-    setLeaderboard(s.docs.map(d => d.data()));
-    setScreen('leaderboard'); setMenuOpen(false); setLoading(false);
+  const removeSection = (sectionToRemove: string) => {
+    setSiteData((prev) => ({
+      ...prev,
+      sections: prev.sections.filter((section) => section !== sectionToRemove),
+    }));
   };
 
-  const loadMistakes = async () => {
-    setLoading(true);
-    const q = query(collection(db, "mistakes"), where("userId", "==", user.uid));
-    const s = await getDocs(q);
-    setMistakes(s.docs.map(d => d.data()));
-    setScreen('mistakes'); setMenuOpen(false); setLoading(false);
+  const publishSite = () => {
+    const slug = toSlug(siteData.slug || siteData.siteName);
+
+    if (!slug) {
+      setPublishMessage("Please enter a valid site name/slug before publishing.");
+      return;
+    }
+
+    const siteToPublish: SiteData = {
+      ...siteData,
+      slug,
+      updatedAt: new Date().toISOString(),
+    };
+
+    saveSite(siteToPublish);
+    setSiteData(siteToPublish);
+
+    const publishUrl = `${window.location.origin}?site=${slug}`;
+    setPublishMessage(`Published! Open: ${publishUrl}`);
   };
 
-  const uploadData = async () => {
+  const generateWithAI = async () => {
+    if (!aiPrompt.trim() || aiLoading) return;
+
+    setAiLoading(true);
+    setAiMessage("");
+
     try {
-      const data = JSON.parse(jsonInput);
-      const batch = writeBatch(db);
-      data.forEach((item: any) => {
-        const ref = doc(collection(db, "questions"));
-        batch.set(ref, item);
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: aiPrompt, mode: "website-builder" }),
       });
-      await batch.commit();
-      alert("Uploaded!"); setJsonInput(''); fetchTests();
-    } catch (e) { alert("JSON format galat hai!"); }
+
+      const data = await response.json();
+      const rawText = String(data.text || "").trim();
+      const cleanedText = rawText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+
+      const aiSite = JSON.parse(cleanedText) as Partial<SiteData>;
+
+      const merged: SiteData = {
+        ...siteData,
+        siteName: aiSite.siteName || siteData.siteName,
+        slug: toSlug(aiSite.slug || aiSite.siteName || siteData.siteName),
+        tagline: aiSite.tagline || siteData.tagline,
+        description: aiSite.description || siteData.description,
+        ctaText: aiSite.ctaText || siteData.ctaText,
+        ctaLink: aiSite.ctaLink || siteData.ctaLink,
+        primaryColor: aiSite.primaryColor || siteData.primaryColor,
+        theme:
+          aiSite.theme === "light" || aiSite.theme === "dark" || aiSite.theme === "sunset"
+            ? aiSite.theme
+            : siteData.theme,
+        sections:
+          Array.isArray(aiSite.sections) && aiSite.sections.length > 0
+            ? aiSite.sections.map((section) => String(section).trim()).filter(Boolean)
+            : siteData.sections,
+        updatedAt: new Date().toISOString(),
+      };
+
+      setSiteData(merged);
+      setAiMessage("AI generated a custom website layout. Review and publish when ready.");
+    } catch {
+      setAiMessage("AI output parse nahi ho paaya. Prompt ko thoda specific bana ke phir try karo.");
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   return (
-    <main className="min-h-screen bg-black text-white font-sans selection:bg-[#00e676] selection:text-black">
-      {/* Navigation & Container Logic */}
-      <div className="max-w-md mx-auto px-4 pb-20">
-        
-        {/* SCREEN: AUTH */}
-        {screen === 'auth' && (
-          <div className="mt-20 p-8 bg-[#111] rounded-[40px] border border-[#222] text-center shadow-2xl">
-            <h1 className="text-4xl font-black text-[#00e676] mb-8 italic tracking-tighter">JEE CHALLENGER</h1>
-            <div className="space-y-4">
-              <input className="w-full p-4 bg-black border border-[#222] rounded-2xl outline-none focus:border-[#00e676]" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-              <input className="w-full p-4 bg-black border border-[#222] rounded-2xl outline-none focus:border-[#00e676]" type="password" placeholder="Password" value={pass} onChange={e => setPass(e.target.value)} />
-              <button onClick={handleEmailAuth} className="w-full bg-[#00e676] text-black font-black py-4 rounded-2xl">{isLoginMode ? 'Login' : 'Signup'}</button>
-              <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white text-black font-bold py-4 rounded-2xl mt-4">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" className="w-5" /> Google Login
+    <main className="min-h-screen bg-slate-100 px-4 py-10 text-slate-900">
+      <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_1fr]">
+        <section className="rounded-2xl bg-white p-6 shadow-sm">
+          <h1 className="text-3xl font-bold">Website Builder + Publish</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Build your website, preview it live, and publish it with a shareable link.
+          </p>
+
+          <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <p className="text-sm font-semibold text-indigo-900">Generate website with your own AI</p>
+            <p className="mt-1 text-xs text-indigo-800">
+              Describe what type of webpage you want (portfolio, restaurant, startup, agency, personal brand, etc.).
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                className="flex-1 rounded-lg border border-indigo-200 px-3 py-2 text-sm"
+                placeholder="Example: Create a dark theme portfolio site for a UI/UX designer"
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+              />
+              <button
+                onClick={generateWithAI}
+                disabled={aiLoading}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+              >
+                {aiLoading ? "Generating..." : "Generate with AI"}
               </button>
-              <p onClick={() => setIsLoginMode(!isLoginMode)} className="text-xs text-gray-500 mt-4 cursor-pointer">
-                {isLoginMode ? "Create Account" : "Back to Login"}
-              </p>
             </div>
+            {aiMessage && <p className="mt-2 text-xs text-indigo-900">{aiMessage}</p>}
           </div>
-        )}
 
-        {/* SCREEN: DASHBOARD */}
-        {screen === 'app' && (
-          <div className="pt-10">
-            <div className="flex gap-2 mb-8 bg-[#111] p-1 rounded-2xl border border-[#222]">
-              {['pyq', 'chapter', 'ai'].map(t => (
-                <button key={t} onClick={() => setTab(t)} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition ${tab === t ? 'bg-[#00e676] text-black' : 'text-gray-500'}`}>{t.toUpperCase()}</button>
-              ))}
-            </div>
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <label className="grid gap-2 text-sm">
+              Site name
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.siteName}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, siteName: e.target.value }))
+                }
+              />
+            </label>
 
-            {tab !== 'ai' ? (
-              <div className="space-y-4">
-                {loading && <p className="text-center text-xs text-gray-500">Loading tests...</p>}
-                {tests.map((ex, i) => (
-                  <div key={i} onClick={() => startQuiz(ex)} className="bg-[#111] p-5 rounded-3xl border border-transparent hover:border-[#00e676] flex justify-between items-center cursor-pointer transition-all">
-                    <span className="font-bold">{ex}</span>
-                    <button className="text-gray-600"><i className="fas fa-play"></i></button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="h-[60vh] flex flex-col bg-[#111] rounded-3xl border border-[#222] p-4">
-                <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-                  {chat.map((m, i) => (
-                    <div key={i} className={`p-4 rounded-2xl text-sm ${m.role === 'user' ? 'bg-[#222] ml-8' : 'bg-[#00e67611] mr-8'}`}>
-                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{m.text}</ReactMarkdown>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input className="flex-1 bg-black p-4 rounded-xl outline-none text-sm" value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Ask JEE Doubts..." />
-                  <button onClick={askAI} disabled={loading} className="bg-[#00e676] text-black px-6 rounded-xl font-black">{loading ? '...' : 'ASK'}</button>
-                </div>
-              </div>
-            )}
+            <label className="grid gap-2 text-sm">
+              Slug
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.slug}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, slug: e.target.value }))
+                }
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm sm:col-span-2">
+              Tagline
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.tagline}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, tagline: e.target.value }))
+                }
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm sm:col-span-2">
+              Description
+              <textarea
+                className="min-h-28 rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.description}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, description: e.target.value }))
+                }
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm">
+              CTA text
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.ctaText}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, ctaText: e.target.value }))
+                }
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm">
+              CTA link
+              <input
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.ctaLink}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, ctaLink: e.target.value }))
+                }
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm">
+              Primary color
+              <input
+                type="color"
+                className="h-11 w-full rounded-lg border border-slate-300 bg-white px-2"
+                value={siteData.primaryColor}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, primaryColor: e.target.value }))
+                }
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm">
+              Theme
+              <select
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                value={siteData.theme}
+                onChange={(e) =>
+                  setSiteData((prev) => ({ ...prev, theme: e.target.value as Theme }))
+                }
+              >
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="sunset">Sunset</option>
+              </select>
+            </label>
           </div>
-        )}
 
-        {/* QUIZ SCREEN */}
-        {screen === 'quiz' && (
-          <div className="mt-10 bg-[#111] p-8 rounded-[40px] border border-[#222]">
-            <div className="flex justify-between items-center mb-6">
-              <span className="text-[#00e676] font-black">Q{currIdx+1}</span>
-              <span className="font-mono">{Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2,'0')}</span>
-            </div>
-            <div className="text-lg mb-8">
-              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{activeQuiz[currIdx]?.text}</ReactMarkdown>
-            </div>
-            <input 
-              className="w-full bg-black border-2 border-[#222] p-6 rounded-3xl text-center text-3xl font-mono text-[#00e676]" 
-              placeholder="Your Answer"
-              value={activeQuiz[currIdx]?.userAns || ""}
-              onChange={(e) => { const q = [...activeQuiz]; q[currIdx].userAns = e.target.value; setActiveQuiz(q); }}
+          <form onSubmit={addSection} className="mt-6 flex gap-2">
+            <input
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2"
+              placeholder="Add section (e.g. Pricing)"
+              value={newSection}
+              onChange={(e) => setNewSection(e.target.value)}
             />
-            <div className="mt-8 flex gap-4">
-              <button onClick={() => setCurrIdx(currIdx-1)} disabled={currIdx === 0} className="flex-1 py-4 bg-[#222] rounded-2xl">PREV</button>
-              <button onClick={() => currIdx === activeQuiz.length-1 ? finishQuiz() : setCurrIdx(currIdx+1)} className="flex-2 py-4 bg-[#00e676] text-black font-black rounded-2xl">
-                {submittingQuiz ? 'SUBMITTING...' : currIdx === activeQuiz.length-1 ? 'FINISH' : 'NEXT'}
+            <button
+              type="submit"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            >
+              Add
+            </button>
+          </form>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {siteData.sections.map((section) => (
+              <button
+                key={section}
+                onClick={() => removeSection(section)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-sm"
+                title="Remove section"
+              >
+                {section} ×
               </button>
-            </div>
+            ))}
           </div>
-        )}
 
-        {/* RESULT SCREEN */}
-        {screen === 'result' && (
-          <div className="mt-20 text-center">
-            <h2 className="text-4xl font-black mb-4">Score: {score}</h2>
-            <div className="bg-[#111] p-6 rounded-3xl text-left border border-[#222]">
-              <h3 className="text-[#00e676] font-bold mb-4">AI Analysis:</h3>
-              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{aiReview}</ReactMarkdown>
-            </div>
-            <button onClick={() => setScreen('app')} className="mt-8 bg-[#00e676] text-black px-10 py-4 rounded-2xl font-black">BACK TO HOME</button>
+          <button
+            onClick={publishSite}
+            className="mt-6 rounded-xl px-5 py-3 font-semibold text-white"
+            style={{ backgroundColor: siteData.primaryColor }}
+          >
+            Publish website
+          </button>
+
+          {publishMessage && (
+            <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">
+              {publishMessage}
+            </p>
+          )}
+        </section>
+
+        <section className={`rounded-2xl border-2 p-6 shadow-sm ${themeStyles[siteData.theme]}`} style={previewStyle}>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] opacity-70">
+            Live Preview
+          </p>
+          <h2 className="mt-2 text-3xl font-bold">{siteData.siteName}</h2>
+          <p className="mt-2 opacity-90">{siteData.tagline}</p>
+
+          <a
+            href={siteData.ctaLink}
+            className="mt-6 inline-block rounded-lg px-4 py-2 font-semibold text-white"
+            style={{ backgroundColor: siteData.primaryColor }}
+          >
+            {siteData.ctaText}
+          </a>
+
+          <p className="mt-6 text-sm leading-7 opacity-85">{siteData.description}</p>
+
+          <div className="mt-6 grid gap-3">
+            {siteData.sections.map((section) => (
+              <div key={section} className="rounded-lg border border-black/10 bg-white/40 p-3 dark:bg-slate-900/50">
+                <h3 className="font-semibold">{section}</h3>
+              </div>
+            ))}
           </div>
-        )}
-
+        </section>
       </div>
     </main>
   );
