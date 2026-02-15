@@ -6,7 +6,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export async function POST(req) {
   try {
-    const { prompt } = await req.json();
+    const { prompt, mode = "tutor" } = await req.json();
 
     // Check if API Key exists
     if (!process.env.GEMINI_API_KEY) {
@@ -16,10 +16,32 @@ export async function POST(req) {
     // 'gemini-flash-latest' sabse stable model hai free tier ke liye
     const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
-    const systemPrompt = `You are an expert JEE Tutor from a top coaching in Kota. 
-    Explain in Hinglish with Step-by-Step solutions. 
-    Use LaTeX for Math ($...$ for inline, $$...$$ for block).
-    Question: ${prompt}`;
+    const systemPrompt =
+      mode === "website-builder"
+        ? `You are an AI website planner.
+Generate exactly one valid JSON object (no markdown) using this schema:
+{
+  "siteName": string,
+  "slug": string,
+  "tagline": string,
+  "description": string,
+  "ctaText": string,
+  "ctaLink": string,
+  "primaryColor": string,
+  "theme": "light" | "dark" | "sunset",
+  "sections": string[]
+}
+
+Rules:
+- Keep sections between 4 and 7 items.
+- ctaLink should be a valid https URL.
+- primaryColor must be a hex color like #4f46e5.
+- slug must be URL-friendly lowercase words with hyphens.
+- Tailor content to this user request: ${prompt}`
+        : `You are an expert JEE Tutor from a top coaching in Kota. 
+Explain in Hinglish with Step-by-Step solutions. 
+Use LaTeX for Math ($...$ for inline, $$...$$ for block).
+Question: ${prompt}`;
 
     const result = await model.generateContent(systemPrompt);
     const response = await result.response;

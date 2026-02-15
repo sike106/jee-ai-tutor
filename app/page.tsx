@@ -142,6 +142,9 @@ export default function Home() {
   const [siteData, setSiteData] = useState<SiteData>(initialState.siteData);
   const [newSection, setNewSection] = useState("");
   const [publishMessage, setPublishMessage] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiMessage, setAiMessage] = useState("");
   const [publishedSite] = useState<SiteData | null>(initialState.publishedSite);
 
   useEffect(() => {
@@ -197,6 +200,58 @@ export default function Home() {
     setPublishMessage(`Published! Open: ${publishUrl}`);
   };
 
+  const generateWithAI = async () => {
+    if (!aiPrompt.trim() || aiLoading) return;
+
+    setAiLoading(true);
+    setAiMessage("");
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: aiPrompt, mode: "website-builder" }),
+      });
+
+      const data = await response.json();
+      const rawText = String(data.text || "").trim();
+      const cleanedText = rawText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+
+      const aiSite = JSON.parse(cleanedText) as Partial<SiteData>;
+
+      const merged: SiteData = {
+        ...siteData,
+        siteName: aiSite.siteName || siteData.siteName,
+        slug: toSlug(aiSite.slug || aiSite.siteName || siteData.siteName),
+        tagline: aiSite.tagline || siteData.tagline,
+        description: aiSite.description || siteData.description,
+        ctaText: aiSite.ctaText || siteData.ctaText,
+        ctaLink: aiSite.ctaLink || siteData.ctaLink,
+        primaryColor: aiSite.primaryColor || siteData.primaryColor,
+        theme:
+          aiSite.theme === "light" || aiSite.theme === "dark" || aiSite.theme === "sunset"
+            ? aiSite.theme
+            : siteData.theme,
+        sections:
+          Array.isArray(aiSite.sections) && aiSite.sections.length > 0
+            ? aiSite.sections.map((section) => String(section).trim()).filter(Boolean)
+            : siteData.sections,
+        updatedAt: new Date().toISOString(),
+      };
+
+      setSiteData(merged);
+      setAiMessage("AI generated a custom website layout. Review and publish when ready.");
+    } catch {
+      setAiMessage("AI output parse nahi ho paaya. Prompt ko thoda specific bana ke phir try karo.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-10 text-slate-900">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_1fr]">
@@ -205,6 +260,29 @@ export default function Home() {
           <p className="mt-2 text-sm text-slate-600">
             Build your website, preview it live, and publish it with a shareable link.
           </p>
+
+          <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <p className="text-sm font-semibold text-indigo-900">Generate website with your own AI</p>
+            <p className="mt-1 text-xs text-indigo-800">
+              Describe what type of webpage you want (portfolio, restaurant, startup, agency, personal brand, etc.).
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                className="flex-1 rounded-lg border border-indigo-200 px-3 py-2 text-sm"
+                placeholder="Example: Create a dark theme portfolio site for a UI/UX designer"
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+              />
+              <button
+                onClick={generateWithAI}
+                disabled={aiLoading}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+              >
+                {aiLoading ? "Generating..." : "Generate with AI"}
+              </button>
+            </div>
+            {aiMessage && <p className="mt-2 text-xs text-indigo-900">{aiMessage}</p>}
+          </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <label className="grid gap-2 text-sm">
