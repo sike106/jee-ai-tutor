@@ -55,7 +55,15 @@ export default function JEEChallengerUltimate() {
   const [jsonInput, setJsonInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  const isAdmin = Boolean(user?.email && ADMIN_EMAILS.includes(String(user.email).toLowerCase()));
+  const userEmail = String(
+    user?.email ||
+      user?.providerData?.find((p: any) => p?.email)?.email ||
+      ''
+  )
+    .trim()
+    .toLowerCase();
+
+  const isAdmin = Boolean(userEmail && ADMIN_EMAILS.includes(userEmail));
 
   useEffect(() => {
     if (tab === 'admin' && !isAdmin) setTab('pyq');
@@ -469,7 +477,7 @@ export default function JEEChallengerUltimate() {
                 <div className="flex items-center justify-between gap-4 mb-4">
                   <h2 className="text-xl sm:text-2xl font-black text-[#00e676] tracking-tight">ADMIN UPLOAD</h2>
                   <span className="text-[10px] px-3 py-2 rounded-full bg-black border border-[#222] text-gray-400">
-                    {user?.email || "no-email"}
+                    {userEmail || "no-email"}
                   </span>
                 </div>
 
