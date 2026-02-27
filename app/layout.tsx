@@ -1,6 +1,5 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Script from "next/script"; // Next.js ka special script tag
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,6 +18,12 @@ export const metadata: Metadata = {
   description: "Aapka personal JEE & Coding AI Tutor",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,13 +32,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-  <Script
-    async
-    src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6942703237637346"
-    crossOrigin="anonymous" // <--- 'o' ko 'O' kar dijiye
-    strategy="afterInteractive"
-  />
-</head>
+        <meta
+          name="google-adsense-account"
+          content="ca-pub-6942703237637346"
+        />
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6942703237637346"
+          crossOrigin="anonymous"
+        />
+      </head>
 
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {/* 2. Asli content (children) hamesha BODY ke andar hota hai */}
