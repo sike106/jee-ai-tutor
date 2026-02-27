@@ -296,8 +296,6 @@ export default function JEEChallengerUltimate() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: chatInput,
-          provider: 'ollama',
-          model: 'gemini-3-flash-preview:cloud',
           stream: true,
         })
       });

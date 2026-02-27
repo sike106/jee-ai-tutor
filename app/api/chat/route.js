@@ -7,10 +7,9 @@ const genAI = process.env.GEMINI_API_KEY
   : null;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
-// Default Ollama model set to gemini-3-flash-preview:cloud as requested
-const OLLAMA_MODEL =
-  process.env.OLLAMA_MODEL || "gemini-3-flash-preview:cloud";
-const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
+// Ollama is optional. On Vercel, you typically won't have an Ollama host unless you run it yourself.
+const OLLAMA_HOST = process.env.OLLAMA_HOST;
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "gemini-3-flash-preview:cloud";
 
 export async function POST(req) {
   try {
@@ -20,17 +19,36 @@ export async function POST(req) {
     const systemPrompt = `You are an expert JEE Tutor from a top coaching in Kota.
 Explain in Hinglish with Step-by-Step solutions.
 Use LaTeX for Math ($...$ for inline, $$...$$ for block).
-Question: ${prompt}`;
+    Question: ${prompt}`;
 
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-    const hasOllama = Boolean(OLLAMA_HOST);
+    const hasOllama = Boolean(process.env.OLLAMA_HOST);
 
-    // User preference: if provider is "ollama", use it first. Otherwise default to Ollama when present; Gemini only on explicit ask or when Ollama unavailable.
-    const useOllama =
-      provider === "ollama" || (!provider && hasOllama && provider !== "gemini");
-    const useGemini = provider === "gemini" || (!useOllama && hasGemini);
+    const providerPref = String(provider || "").toLowerCase().trim();
 
-    if (useOllama && hasOllama) {
+    // 1) Explicit provider selection
+    if (providerPref === "ollama") {
+      if (!hasOllama) {
+        throw new Error("OLLAMA_HOST missing. (Vercel pe localhost Ollama nahi chalega)");
+      }
+      if (stream) return await streamWithOllama(systemPrompt, modelOverride, req.signal);
+      const text = await generateWithOllama(systemPrompt, modelOverride);
+      return NextResponse.json({ text });
+    }
+
+    if (providerPref === "gemini") {
+      if (!hasGemini) throw new Error("GEMINI_API_KEY missing.");
+      const text = await generateWithGemini(systemPrompt, modelOverride);
+      return NextResponse.json({ text });
+    }
+
+    // 2) Default selection: prefer Gemini when available (works on Vercel), otherwise Ollama.
+    if (hasGemini) {
+      const text = await generateWithGemini(systemPrompt, modelOverride);
+      return NextResponse.json({ text });
+    }
+
+    if (hasOllama) {
       if (stream) {
         return await streamWithOllama(systemPrompt, modelOverride, req.signal);
       }
@@ -38,14 +56,9 @@ Question: ${prompt}`;
       return NextResponse.json({ text });
     }
 
-    if (useGemini && hasGemini) {
-      const text = await generateWithGemini(systemPrompt, modelOverride);
-      return NextResponse.json({ text });
-    }
-
     // If neither configured, inform user clearly
     const text =
-      "Na to Ollama host mila aur na GEMINI_API_KEY set hai. .env.local check karo.";
+      "AI configured nahi hai: `GEMINI_API_KEY` set karo (recommended for Vercel) ya `OLLAMA_HOST` set karo (self-hosted Ollama).";
     return NextResponse.json({ text });
   } catch (error) {
     console.error("AI Route Error:", error);
